@@ -9,7 +9,7 @@ GIF="${GIF:-$HERE/../demo.gif}"                                                 
 BUILD="${BUILD:-${TMPDIR:-/tmp}/meetalert-demo}"                                    # never inside the repo (421 MB of frames)
 mkdir -p "$BUILD"
 swiftc -swift-version 5 -parse-as-library -O -o "$BUILD/demo" \
-  "$KIT/DemoKit.swift" "$HERE/stubs.swift" "$HERE/scene.swift" "$APP/AlertPanel.swift" "$APP/Theme.swift"
+  "$KIT/DemoKit.swift" "$HERE/stubs.swift" "$HERE/scene.swift" "$APP/AlertPanel.swift" "$APP/Theme.swift" "$APP/AlertAppearance.swift"
 rm -rf "$BUILD/frames"
 "$BUILD/demo" "$BUILD/frames" 30 -AppleLocale en_US -AppleLanguages "(en)"      # en_US: "9:46 AM", like the menu text
 "$KIT/encode.sh" "$BUILD/frames" "$GIF" ${MP4:+"$MP4"} ${WEBP:+"$WEBP"} ${POSTER:+"$POSTER"}

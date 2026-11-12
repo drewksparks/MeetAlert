@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Settings → Appearance**: popup size presets, custom width/minimum height, text/button scaling, and per-button visibility. Hidden actions stay in More with their keyboard shortcuts.
+- Optional custom popup background and urgency colors, with automatic text contrast adjustment.
+- A sample-alert preview and an appearance-only reset. Open alerts update when appearance changes; buttons wrap at compact sizes.
+
 ## [1.9.1] - 2026-11-04
 
 ### Added

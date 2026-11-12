@@ -197,10 +197,35 @@ all change together, so it survives colour-blindness, Increase Contrast (which d
 translucency for an opaque background and a heavier border) and Reduce Motion (which keeps the
 fades and drops the movement).
 
-The row of actions is **Join <provider>** (the one filled button, `↩`), **Snooze 5m**,
+The default row of actions is **Join <provider>** (the one filled button, `↩`), **Snooze 5m**,
 **Dismiss** (`⌘D`), **Ignore**/**Ignore series** (`⌘⇧I`), and **More ▾** holding the two
 remaining snoozes. With no meeting link, Dismiss becomes the filled button — there's always
 exactly one. Nothing about the layout changes on hover; only the buttons themselves light up.
+
+### Appearance
+
+**Settings → Appearance** lets you customize desktop popups:
+
+- Choose Compact, Default or Large, or adjust width (480–1200 pt), minimum height (168–480 pt),
+  and text/button size (100–200%). Buttons wrap when needed, the panel grows to fit its content,
+  and its width is limited to the display. Open alerts update when you change appearance.
+- Show or hide Join, Snooze, Dismiss and Ignore in the main row. Hidden actions remain in
+  **More**, which always stays visible. Existing keyboard shortcuts still work after clicking
+  the panel to give it focus. Phone notification actions are unaffected.
+- Enable custom colors for the background and each urgency state. The background becomes
+  opaque; text uses a contrasting color, and signal brightness is adjusted when necessary for
+  readability. With custom colors off, the original system-aware colors remain in use.
+- **Preview Alert** shows a sample in any of the three urgency states. Its actions close the
+  sample without opening a meeting, sending a push or changing calendar state.
+- **Reset Appearance to Defaults** restores just these appearance preferences.
+
+The existing Reduce Motion and Increase Contrast support also applies to customized popups.
+
+These preferences are saved under `alertAppearance` in `config.json`. Its fields are `width`
+(640), `height` (168), `textScale` (100), `showJoin`, `showSnooze`, `showDismiss`, `showIgnore`
+(all true), `customColors` (false), and four `#RRGGBB` colors: `background` (`#FFFFFF`),
+`upcoming` (`#006A85`), `imminent` (`#9A5B00`), `started` (`#C41E17`). Missing or invalid
+appearance fields use defaults; numeric values are constrained to the ranges above.
 
 ## How it works
 
@@ -305,6 +330,15 @@ attached to your terminal.
 Test mode forces a few things for determinism: you're always treated as "present" (never away),
 the escalation loop caps at a single urgent resend instead of `escalationRepeats`, and the morning-agenda push
 is skipped entirely.
+
+To isolate a UI test from previous test runs, set `MEETALERT_TEST_CONFIG_DIR` to an absolute
+temporary directory along with `MEETALERT_TEST=1`. Without it, test mode uses
+`~/.config/meetalert-test`. The override is ignored outside test mode.
+
+Run the appearance config and contrast tests with `swift test --filter AppearanceTests`.
+To also render sample popups at default/compact sizes, 200% text size, all buttons hidden,
+and custom colors, set `MEETALERT_APPEARANCE_SCREENSHOTS=/tmp/meetalert-appearance`.
+These screenshots use synthetic data and do not show windows or send notifications.
 
 ## Google Calendar (and any other calendar)
 

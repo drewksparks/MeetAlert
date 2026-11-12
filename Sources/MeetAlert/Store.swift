@@ -48,13 +48,14 @@ final class Store {
         var ntfyTopic = ""  // empty = phone notifications disabled; set your private topic
         var calendarIds: [String]? = nil  // nil = all calendars
         var calendarColors: [String: String] = [:]  // calendarIdentifier → "#RRGGBB"; missing = the calendar's own colour
+        var alertAppearance = AlertAppearance()
         // Secrets: Keychain only, deliberately not in CodingKeys (never written to config.json).
         var ntfyToken = ""  // optional Bearer token for a protected server
         var ntfyFallbackURL = ""  // optional full topic URL published to (unauthenticated, no actions) when the primary fails
 
         private enum CodingKeys: String, CodingKey {
             case alertMinutesBefore, lateAlertMinutes, escalationSeconds, escalationRepeats, awayIdleSeconds, travelLeadMinutes,
-                 agendaTime, ignoreAllDay, ignoreKeywords, ntfyServer, ntfyTopic, calendarIds, calendarColors
+                 agendaTime, ignoreAllDay, ignoreKeywords, ntfyServer, ntfyTopic, calendarIds, calendarColors, alertAppearance
             case leadMinutes, agendaHour  // legacy keys, migrated in init(from:) below
         }
 
@@ -85,6 +86,7 @@ final class Store {
             ntfyTopic = try c.decodeIfPresent(String.self, forKey: .ntfyTopic) ?? ""
             calendarIds = try c.decodeIfPresent([String].self, forKey: .calendarIds)
             calendarColors = try c.decodeIfPresent([String: String].self, forKey: .calendarColors) ?? [:]
+            alertAppearance = (try? c.decode(AlertAppearance.self, forKey: .alertAppearance)) ?? AlertAppearance()
         }
 
         // Not private: SettingsView commits the alert-times field through the same normalization.
@@ -110,6 +112,7 @@ final class Store {
             try c.encode(ntfyTopic, forKey: .ntfyTopic)
             try c.encode(calendarIds, forKey: .calendarIds)
             try c.encode(calendarColors, forKey: .calendarColors)
+            try c.encode(alertAppearance.normalized, forKey: .alertAppearance)
         }
     }
 
@@ -140,9 +143,15 @@ final class Store {
 
     // Test mode gets its own directory: a test run must never read the real ntfy topic (which would
     // push [TEST] alerts to a real phone) nor overwrite the real alerted/ignored state.
-    static let configDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(ProcessInfo.processInfo.environment["MEETALERT_TEST"] == "1"
-                                ? ".config/meetalert-test" : ".config/meetalert")
+    static let configDir: URL = {
+        let env = ProcessInfo.processInfo.environment
+        let testing = env["MEETALERT_TEST"] == "1"
+        if testing, let path = env["MEETALERT_TEST_CONFIG_DIR"], path.hasPrefix("/") {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(testing ? ".config/meetalert-test" : ".config/meetalert")
+    }()
     static let configURL = configDir.appendingPathComponent("config.json")
     static let stateURL = configDir.appendingPathComponent("state.json")
 
@@ -158,7 +167,14 @@ final class Store {
 
     private let testMode = ProcessInfo.processInfo.environment["MEETALERT_TEST"] == "1"
     @ObservationIgnored private lazy var ekStore = EKEventStore()  // never touched in test mode
-    var config = Config() { didSet { saveConfig() } }  // Settings GUI + config.json both write here
+    var config = Config() {
+        didSet {
+            saveConfig()
+            if config.alertAppearance != oldValue.alertAppearance {
+                AlertPanel.updateAppearance(config.alertAppearance)
+            }
+        }
+    }  // Settings GUI + config.json both write here
     private var secretsLoaded = false
     private var persisted = Persisted()
     private var testMeetings: [Meeting] = []
@@ -572,7 +588,7 @@ final class Store {
     /// token == nil means "re-show a snoozed panel" (no ntfy, no escalation).
     private func showPanel(_ m: Meeting, alertKey: String, token: String?) {
         if !showingAlerts.contains(where: { $0.key == alertKey }) { showingAlerts.append((alertKey, m)) }
-        AlertPanel.show(m, alertKey: alertKey,
+        AlertPanel.show(m, alertKey: alertKey, appearance: config.alertAppearance,
             onAck: { [weak self] in self?.ack(alertKey) },
             onSnooze: { [weak self] minutes in self?.snooze(m, alertKey: alertKey, minutes: minutes) },
             onSnoozeStart: { [weak self] in self?.snoozeUntilStart(m, alertKey: alertKey) },

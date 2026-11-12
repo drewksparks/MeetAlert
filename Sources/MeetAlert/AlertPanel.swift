@@ -19,13 +19,12 @@ private final class KeyablePanel: NSPanel {
 /// Multiple panels stack vertically; dismissing one closes the gap for the ones below it.
 @MainActor
 enum AlertPanel {
-    private static var active: [(key: String, panel: NSPanel, state: PanelState)] = []
-    private static let width: CGFloat = 640
-    private static let height: CGFloat = 168
+    private static var active: [(key: String, panel: NSPanel, state: PanelState, appearance: AlertAppearance)] = []
     private static let gap: CGFloat = 10
     private static let margin: CGFloat = 12
 
-    static func show(_ m: Store.Meeting, alertKey: String,
+    static func show(_ m: Store.Meeting, alertKey: String, appearance: AlertAppearance = AlertAppearance(),
+                      preview: Bool = false,
                       onAck: @escaping () -> Void,
                       onSnooze: @escaping (Int) -> Void,
                       onSnoozeStart: @escaping () -> Void,
@@ -40,7 +39,7 @@ enum AlertPanel {
         guard let screen = screenUnderMouse() else {
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(30))
-                show(m, alertKey: alertKey, onAck: onAck, onSnooze: onSnooze, onSnoozeStart: onSnoozeStart, onIgnore: onIgnore)
+                show(m, alertKey: alertKey, appearance: appearance, preview: preview, onAck: onAck, onSnooze: onSnooze, onSnoozeStart: onSnoozeStart, onIgnore: onIgnore)
             }
             return
         }
@@ -51,7 +50,10 @@ enum AlertPanel {
             action()
         }
 
-        let onJoin: (() -> Void)? = m.joinURL.map { url in { closeThen { NSWorkspace.shared.open(url); onAck() } } }
+        let onJoin: (() -> Void)? = m.joinURL.map { url in { closeThen {
+            if !preview { NSWorkspace.shared.open(url) }
+            onAck()
+        } } }
 
         panel.contentView = NSHostingView(rootView: AlertContent(
             meeting: m,
@@ -61,20 +63,24 @@ enum AlertPanel {
             onSnooze5: { closeThen { onSnooze(5) } },
             onSnoozeStart: { closeThen(onSnoozeStart) },
             onIgnore: { closeThen(onIgnore) },
-            onDismiss: { closeThen(onAck) }
+            onDismiss: { closeThen(onAck) },
+            appearance: appearance
         ))
-        let final = frame(forIndex: active.count, screen: screen)
+        fit(panel, appearance: appearance, screen: screen)
+        active.append((alertKey, panel, state, appearance))
+        let final = frame(forIndex: active.count - 1, screen: screen)
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         panel.alphaValue = 0
         panel.setFrame(reduce ? final : final.offsetBy(dx: 0, dy: 14), display: false)
         panel.orderFrontRegardless()
-        active.append((alertKey, panel, state))
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = reduce ? 0.12 : 0.28
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
             panel.animator().setFrame(final, display: true)
         }
+
+        guard !preview else { return }  // sample data only: no sound or meeting announcement
 
         // The panel never takes VoiceOver focus (non-activating, app never active): speak it (A11Y-6).
         let when = m.start <= Date() ? "started" : "starts at \(m.start.formatted(date: .omitted, time: .shortened))"
@@ -96,12 +102,16 @@ enum AlertPanel {
     static func escalated(key: String) {
         guard let entry = active.first(where: { $0.key == key }), !entry.state.escalated else { return }
         entry.state.escalated = true
+        if let screen = screenUnderMouse() {
+            fit(entry.panel, appearance: entry.appearance, screen: screen)
+            reflow()
+        }
         NSSound(named: "Sosumi")?.play()
     }
 
     private static func makePanel() -> NSPanel {
         let panel = KeyablePanel(
-            contentRect: NSRect(x: 0, y: 0, width: width, height: height),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 168),
             styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
             defer: false
@@ -157,15 +167,45 @@ enum AlertPanel {
         return NSScreen.screens.first { $0.frame.contains(location) } ?? NSScreen.main ?? NSScreen.screens.first
     }
 
-    /// Clamps to the last fully-visible slot on this screen — beyond that, extra panels overlap the
-    /// last slot instead of computing a Y coordinate below the screen's bottom edge.
+    /// Preserve each panel's fitted size when stacking; extra panels overlap at the bottom.
     private static func frame(forIndex index: Int, screen: NSScreen) -> NSRect {
-        let maxSlots = max(1, Int((screen.visibleFrame.height - margin) / (height + gap)))
-        let clampedIndex = min(index, maxSlots - 1)
-        let x = screen.visibleFrame.midX - width / 2
-        let y = screen.visibleFrame.maxY - margin - CGFloat(clampedIndex + 1) * (height + gap) + gap
-        return NSRect(x: x, y: y, width: width, height: height)
+        let size = active[index].panel.frame.size
+        let preceding = active.prefix(index).reduce(CGFloat(0)) { $0 + $1.panel.frame.height + gap }
+        let x = screen.visibleFrame.midX - size.width / 2
+        let y = max(screen.visibleFrame.minY + margin, screen.visibleFrame.maxY - margin - preceding - size.height)
+        return NSRect(origin: CGPoint(x: x, y: y), size: size)
     }
+
+    private static func fit(_ panel: NSPanel, appearance: AlertAppearance, screen: NSScreen) {
+        guard let host = panel.contentView as? NSHostingView<AlertContent> else { return }
+        host.rootView.appearance = appearance.normalized
+        host.rootView.availableWidth = screen.visibleFrame.width - 2 * margin
+        host.layoutSubtreeIfNeeded()
+        panel.setContentSize(host.fittingSize)
+    }
+
+    static func updateAppearance(_ appearance: AlertAppearance) {
+        guard let screen = screenUnderMouse() else { return }
+        for index in active.indices {
+            active[index].appearance = appearance
+            fit(active[index].panel, appearance: appearance, screen: screen)
+        }
+        reflow()
+    }
+
+    /// The preview exercises the real panel, but cannot send a push, open a link, or alter a meeting.
+    static func showPreview(appearance: AlertAppearance, secondsUntilStart: Int = 180) {
+        let key = "appearance-preview"
+        dismiss(key: key)
+        let start = Date().addingTimeInterval(Double(secondsUntilStart))
+        let meeting = Store.Meeting(key: key, title: "Design review — sample meeting", start: start,
+                                    end: start.addingTimeInterval(1800), hasPhysicalLocation: false,
+                                    joinURL: URL(string: "https://meet.google.com/example"), seriesId: nil,
+                                    calendarTitle: "Preview", calendarColor: .systemBlue)
+        show(meeting, alertKey: key, appearance: appearance, preview: true,
+             onAck: {}, onSnooze: { _ in }, onSnoozeStart: {}, onIgnore: {})
+    }
+
 }
 
 /// How close the meeting is — drives hue, icon, state word and the numeral's unit together, so
@@ -201,6 +241,28 @@ struct AlertContent: View {
     let onSnoozeStart: () -> Void
     let onIgnore: () -> Void
     let onDismiss: () -> Void
+    var appearance = AlertAppearance()
+    var availableWidth: CGFloat? = nil
+
+    private var options: AlertAppearance { appearance.normalized }
+    private var scale: CGFloat { options.scale }
+    private var panelWidth: CGFloat { min(CGFloat(options.width), availableWidth ?? .infinity) }
+    private var customBackground: NSColor { NSColor(hex: options.background) ?? .white }
+    private var foreground: Color { options.customColors ? Color(nsColor: customBackground.contrastingText) : .primary }
+    private var secondary: Color { options.customColors ? foreground : .secondary }
+
+    private func signal(_ urgency: Urgency) -> Color {
+        guard options.customColors else { return urgency.signal }
+        let hex = urgency == .upcoming ? options.upcoming : urgency == .imminent ? options.imminent : options.started
+        return Color(nsColor: (NSColor(hex: hex) ?? .black).readable(on: customBackground))
+    }
+
+    private func buttonStyle(_ urgency: Urgency, prominent: Bool = false) -> SignalButtonStyle {
+        let signal = signal(urgency)
+        return SignalButtonStyle(signal: signal, prominent: prominent, scale: scale, foreground: foreground,
+                                 onSignal: options.customColors ? Color(nsColor: NSColor(signal).contrastingText) : Theme.onSignal,
+                                 customColors: options.customColors)
+    }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
@@ -213,55 +275,81 @@ struct AlertContent: View {
             let remaining = meeting.start.timeIntervalSince(ctx.date)
             card(urgency: remaining > 60 ? .upcoming : remaining > 0 ? .imminent : .started, remaining: remaining)
         }
-        .frame(width: 640, height: 168)
+        .frame(width: panelWidth)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func card(urgency: Urgency, remaining: TimeInterval) -> some View {
         let numbers = countdown(remaining)
         return VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 5) {
-                    stateRow(urgency)
-                    Text(meeting.title).font(Theme.title).lineLimit(2)
+            if panelWidth < 600 && scale > 1.25 {
+                // At large text sizes, give the title and metadata the full card width.
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top) {
+                        stateRow(urgency)
+                        Spacer(minLength: 8)
+                        countdownView(numbers, urgency: urgency)
+                    }
+                    title
                     metaRow
                 }
-                Spacer(minLength: 0)
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(numbers.big)
-                        .font(Theme.countdown)
-                        .foregroundStyle(urgency.signal)
-                        .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
-                        .animation(.snappy, value: numbers.big)
-                    Text(numbers.unit).font(Theme.unit).foregroundStyle(.secondary)
+            } else {
+                HStack(alignment: .top, spacing: 16 * scale) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        stateRow(urgency)
+                        title
+                        metaRow
+                    }
+                    Spacer(minLength: 0)
+                    countdownView(numbers, urgency: urgency)
                 }
-                .frame(minWidth: 96, alignment: .trailing)
             }
-            Spacer(minLength: 6)
+            Spacer(minLength: 10 * scale)
             actions(urgency)
         }
         .padding(18)
+        .foregroundStyle(foreground)
         .padding(.leading, 6)  // clear the signal rim
-        .frame(width: 640, height: 168, alignment: .topLeading)
+        .frame(width: panelWidth, alignment: .topLeading)
+        .frame(minHeight: CGFloat(options.height), alignment: .topLeading)
         .background(background(urgency))
+    }
+
+    private var title: some View {
+        Text(meeting.title).font(.system(size: 17 * scale, weight: .semibold)).lineLimit(2)
+            .fixedSize(horizontal: false, vertical: true).help(meeting.title)
+    }
+
+    private func countdownView(_ numbers: (big: String, unit: String), urgency: Urgency) -> some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(numbers.big)
+                .font(.system(size: 40 * scale, weight: .semibold, design: .rounded).monospacedDigit())
+                .foregroundStyle(signal(urgency))
+                .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
+                .animation(.snappy, value: numbers.big)
+            Text(numbers.unit).font(.system(size: 12 * scale, weight: .medium, design: .rounded)).foregroundStyle(secondary)
+        }
+        .frame(minWidth: 96 * scale, alignment: .trailing)
     }
 
     private func stateRow(_ urgency: Urgency) -> some View {
         HStack(spacing: 5) {
             Image(systemName: state.escalated ? "bell.and.waves.left.and.right.fill" : urgency.symbol)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 12 * scale, weight: .semibold))
             Text(state.escalated ? "Not acknowledged — phone alerted" : urgency.word)
-                .font(Theme.state)
+                .font(.system(size: 12 * scale, weight: .semibold, design: .rounded))
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .foregroundStyle(urgency.signal)
+        .foregroundStyle(signal(urgency))
     }
 
     private var metaRow: some View {
-        HStack(spacing: 14) {
+        AlertFlowLayout(spacing: 8 * scale) {
             Text("\(meeting.start.formatted(date: .omitted, time: .shortened))–\(meeting.end.formatted(date: .omitted, time: .shortened))")
             if let color = meeting.calendarColor, !meeting.calendarTitle.isEmpty {
                 HStack(spacing: 5) {
                     Circle().fill(Color(nsColor: color)).frame(width: 8, height: 8)
-                    Text(meeting.calendarTitle).font(Theme.calendarTag)
+                    Text(meeting.calendarTitle).font(.system(size: 12 * scale, weight: .medium)).lineLimit(1)
                 }
             }
             if let url = meeting.joinURL {
@@ -270,64 +358,83 @@ struct AlertContent: View {
                 Label("In person", systemImage: "figure.walk")
             }
         }
-        .font(Theme.meta)
-        .foregroundStyle(.secondary)
+        .font(.system(size: 13 * scale))
+        .foregroundStyle(secondary)
     }
 
     private func actions(_ urgency: Urgency) -> some View {
-        HStack(spacing: 8) {
-            if let onJoin, let url = meeting.joinURL {
-                Button {
-                    onJoin()
-                } label: {
+        AlertFlowLayout(spacing: 8 * scale) {
+            if options.showJoin, let onJoin, let url = meeting.joinURL {
+                Button(action: onJoin) {
                     Label("Join \(Ntfy.provider(for: url))", systemImage: "video.fill")
                 }
-                .buttonStyle(SignalButtonStyle(signal: urgency.signal, prominent: true))
+                .buttonStyle(buttonStyle(urgency, prominent: true))
                 .keyboardShortcut(.defaultAction)
                 .help("Join the meeting (Return)")
             }
-            Button("Snooze 5 Min", action: onSnooze5)
-                .buttonStyle(SignalButtonStyle(signal: urgency.signal))
-                .keyboardShortcut("5", modifiers: [])
-                .help("Snooze 5 minutes (5 or Esc)")
-            Button("Dismiss", action: onDismiss)
-                // Exactly one filled button: Dismiss takes it when there is nothing to join.
-                .buttonStyle(SignalButtonStyle(signal: urgency.signal, prominent: onJoin == nil))
-                // ⌘D, never a bare "d" or Return: dismiss is FINAL (it acks the occurrence), and a
-                // clicked card is key, so a bare letter would let ordinary typing kill the alert.
-                .keyboardShortcut("d", modifiers: .command)
-                .help("Done with this meeting, no more alerts (⌘D)")
-            Button(meeting.seriesId != nil ? "Ignore Series" : "Ignore", action: onIgnore)
-                .buttonStyle(SignalButtonStyle(signal: urgency.signal))
-                // ⌘⇧I, same reasoning as Dismiss and then some: ignoring is final AND wide-reaching.
-                .keyboardShortcut("i", modifiers: [.command, .shift])
-                .help("Never alert for this again (⌘⇧I)")
-            Spacer(minLength: 0)
+            if options.showSnooze {
+                Button("Snooze 5 Min", action: onSnooze5)
+                    .buttonStyle(buttonStyle(urgency))
+                    .keyboardShortcut("5", modifiers: [])
+                    .help("Snooze 5 minutes (5 or Esc)")
+            }
+            if options.showDismiss {
+                Button("Dismiss", action: onDismiss)
+                    .buttonStyle(buttonStyle(urgency, prominent: onJoin == nil || !options.showJoin))
+                    .keyboardShortcut("d", modifiers: .command)
+                    .help("Done with this meeting, no more alerts (⌘D)")
+            }
+            if options.showIgnore {
+                Button(meeting.seriesId != nil ? "Ignore Series" : "Ignore", action: onIgnore)
+                    .buttonStyle(buttonStyle(urgency))
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
+                    .help("Never alert for this again (⌘⇧I)")
+            }
+            // Hidden buttons move here. No configuration can remove the way to dismiss or snooze.
             Menu("More") {
                 if let onJoin {
                     Button("Join Meeting", action: onJoin).keyboardShortcut("j", modifiers: [])
                 }
-                Button("Snooze 1 Minute", action: onSnooze1).keyboardShortcut("1", modifiers: [])  // snooze is reversible
+                if !options.showSnooze {
+                    Button("Snooze 5 Minutes", action: onSnooze5).keyboardShortcut("5", modifiers: [])
+                }
+                if !options.showDismiss {
+                    Button("Dismiss", action: onDismiss).keyboardShortcut("d", modifiers: .command)
+                }
+                if !options.showIgnore {
+                    Button(meeting.seriesId != nil ? "Ignore Series" : "Ignore", action: onIgnore)
+                        .keyboardShortcut("i", modifiers: [.command, .shift])
+                }
+                Button("Snooze 1 Minute", action: onSnooze1).keyboardShortcut("1", modifiers: [])
                 if meeting.start > Date() {
                     Button("Snooze Until Start (\(meeting.start.formatted(date: .omitted, time: .shortened)))",
                            action: onSnoozeStart).keyboardShortcut("t", modifiers: [])
                 }
             }
             .menuStyle(.button)
-            .buttonStyle(SignalButtonStyle(signal: urgency.signal))
+            .buttonStyle(buttonStyle(urgency))
             .fixedSize()
-            // esc means "go away, come back" — never a silent final dismissal.
-            Button("", action: onSnooze5).keyboardShortcut(.cancelAction).opacity(0).frame(width: 0)
+            .help("More meeting actions")
+        }
+        .background {
+            if !options.showJoin, let onJoin {
+                Button("", action: onJoin).keyboardShortcut(.defaultAction).opacity(0).frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            }
+            // Escape remains a reversible snooze even when its button is in More.
+            Button("", action: onSnooze5).keyboardShortcut(.cancelAction).opacity(0).frame(width: 0, height: 0)
                 .accessibilityHidden(true)
         }
     }
 
     private func background(_ urgency: Urgency) -> some View {
         let shape = RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous)
-        let signal = urgency.signal
+        let signal = signal(urgency)
         let wide = state.escalated || urgency == .started
         return ZStack(alignment: .leading) {
-            if contrast == .increased {
+            if options.customColors {
+                shape.fill(Color(nsColor: customBackground))
+            } else if contrast == .increased {
                 shape.fill(Color(nsColor: .windowBackgroundColor))
             } else {
                 shape.fill(.regularMaterial)
@@ -346,7 +453,7 @@ struct AlertContent: View {
                            value: pulsing)
         }
         .clipShape(shape)
-        .overlay(shape.strokeBorder(contrast == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(signal.opacity(0.55)),
+        .overlay(shape.strokeBorder(contrast == .increased ? AnyShapeStyle(foreground) : AnyShapeStyle(signal.opacity(0.55)),
                                     lineWidth: contrast == .increased ? 2 : Theme.strokeWidth))
         .onChange(of: state.escalated) { _, escalated in
             pulsing = escalated && !reduceMotion
@@ -368,34 +475,42 @@ struct AlertContent: View {
 private struct SignalButtonStyle: ButtonStyle {
     var signal: Color
     var prominent = false
+    var scale: CGFloat = 1
+    var foreground: Color = .primary
+    var onSignal: Color = Theme.onSignal
+    var customColors = false
 
     func makeBody(configuration: Configuration) -> some View {
-        SignalButtonBody(cfg: configuration, signal: signal, prominent: prominent)
+        SignalButtonBody(cfg: configuration, signal: signal, prominent: prominent, scale: scale, foreground: foreground, onSignal: onSignal, customColors: customColors)
     }
 
     private struct SignalButtonBody: View {
         let cfg: Configuration
         let signal: Color
         let prominent: Bool
+        let scale: CGFloat
+        let foreground: Color
+        let onSignal: Color
+        let customColors: Bool
         @State private var hover = false
         @Environment(\.colorSchemeContrast) private var contrast
 
         var body: some View {
             cfg.label
-                .font(Theme.button)
-                .padding(.horizontal, 14)
-                .frame(height: 32)
-                .foregroundStyle(prominent ? AnyShapeStyle(Theme.onSignal) : AnyShapeStyle(.primary))
+                .font(.system(size: 13 * scale, weight: .semibold))
+                .padding(.horizontal, 14 * scale)
+                .frame(height: 32 * scale)
+                .foregroundStyle(prominent ? AnyShapeStyle(onSignal) : AnyShapeStyle(foreground))
                 .background(
                     Capsule()
-                        .fill(prominent ? AnyShapeStyle(signal) : AnyShapeStyle(Color.primary.opacity(hover ? 0.14 : 0.08)))
+                        .fill(prominent ? AnyShapeStyle(signal) : AnyShapeStyle(foreground.opacity(customColors ? 0 : hover ? 0.14 : 0.08)))
                         .overlay(Capsule().strokeBorder(
                             prominent ? AnyShapeStyle(.clear)
-                                : contrast == .increased ? AnyShapeStyle(.primary) : AnyShapeStyle(signal.opacity(hover ? 0.7 : 0.35)),
+                                : contrast == .increased ? AnyShapeStyle(foreground) : AnyShapeStyle(signal.opacity(hover ? 0.7 : 0.35)),
                             lineWidth: contrast == .increased ? 1.5 : 1))
                 )
-                // Hover never brightens the filled button: white on a lighter fill fell to ~4.1:1.
-                .opacity(prominent && hover ? 0.92 : 1)
+                // Keep custom text and fills opaque so hover preserves the calculated contrast.
+                .opacity(!customColors && prominent && hover ? 0.92 : 1)
                 .scaleEffect(cfg.isPressed ? 0.97 : 1)
                 .animation(.easeOut(duration: 0.12), value: hover)
                 .onHover { hover = $0 }
