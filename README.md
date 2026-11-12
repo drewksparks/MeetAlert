@@ -66,7 +66,7 @@ brew install --cask roypadina/tap/meetalert
 - **Repeating urgent escalation** — up to `escalationRepeats` re-pushes (3 by default, never past 15 minutes after the meeting starts) until you ack or snooze, not just one.
 - **Morning agenda push** — an optional daily rundown of today's meetings and your largest free gap.
 - Reads **every calendar macOS syncs** — Google, iCloud, Exchange, CalDAV — with zero API setup, and skips meetings you've declined. See [below](#google-calendar-and-any-other-calendar).
-- **Travel-lead alerts** for meetings with a physical address — one extra early alert to account for getting there.
+- **Travel-lead alerts** for meetings with a physical address — one extra early alert to account for getting there. Plain "Google Meet" and "Google Meet (instructions in description)" location labels don't trigger travel alerts; physical locations still do, even when the event also has a video-call link.
 - Per-calendar checklist, all-day filtering, and keyword-based ignore list.
 - Menu-bar countdown to your next meeting (or time left in the one you're in), with the icon itself carrying the state — plain calendar when nothing's close, a clock inside 2 hours, a badged clock inside 3 minutes, a filled clock while a meeting runs, a warning triangle if something needs attention. Opens at login if you choose, and re-scans immediately on wake. A **Current Alert** section in the menu has Join / Snooze / Dismiss, VoiceOver announces each alert, and `meetalert://settings|snooze|dismiss` is there for Shortcuts and Raycast.
 - Ad-hoc signed, un-notarized, no analytics, no network calls besides the ntfy push you configure and the update check: MeetAlert asks once (on its second launch) whether to check for updates automatically; with your yes it checks once a day by downloading the release feed from GitHub, which sends nothing about you.
@@ -282,6 +282,8 @@ exact key format if you ever need to hand-edit it (e.g. to un-ignore something).
 - **Whole calendars** — untick a calendar in Settings → Calendars to stop watching it entirely.
 - **Ignore forever** — the popup/menu ignore button. On a **recurring** meeting it ignores the
   **whole series** (the button says "Ignore series"); on a one-off it ignores that occurrence.
+  Ignoring also closes its open alerts and cancels pending snoozes and escalations, across all
+  occurrences when ignoring a series.
 - **Pre-ignore** — Settings → **Ignore** lists the next 7 days of meetings with per-row Ignore
   buttons (recurring ones offer "This time only" / "Whole series"), plus everything currently
   ignored with one-click un-ignore. Ignored meetings are excluded everywhere — alerts, menu bar,
