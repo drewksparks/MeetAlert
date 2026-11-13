@@ -255,21 +255,27 @@ struct AlertContent: View {
     private var options: AlertAppearance { appearance.normalized }
     private var scale: CGFloat { options.scale }
     private var panelWidth: CGFloat { min(CGFloat(options.width), availableWidth ?? .infinity) }
-    private var customBackground: NSColor { NSColor(hex: options.background) ?? .white }
-    private var foreground: Color { options.customColors ? Color(nsColor: customBackground.contrastingText) : .primary }
-    private var secondary: Color { options.customColors ? foreground : .secondary }
+    private var usesPalette: Bool { options.customColors || options.theme == .retro }
+    private var customBackground: NSColor {
+        if options.customColors { return NSColor(hex: options.background) ?? .white }
+        return options.theme == .retro ? NSColor(srgbRed: 0.9, green: 0.9, blue: 0.88, alpha: 1) : .white
+    }
+    private var foreground: Color { usesPalette ? Color(nsColor: customBackground.contrastingText) : .primary }
+    private var secondary: Color { usesPalette ? foreground : .secondary }
+    private var typeDesign: Font.Design { options.theme.squareCorners ? .monospaced : .default }
+    private var titleWeight: Font.Weight { options.theme == .blocky ? .black : .semibold }
 
     private func signal(_ urgency: Urgency) -> Color {
-        guard options.customColors else { return urgency.signal }
+        guard usesPalette else { return urgency.signal }
         let hex = urgency == .upcoming ? options.upcoming : urgency == .imminent ? options.imminent : options.started
         return Color(nsColor: (NSColor(hex: hex) ?? .black).readable(on: customBackground))
     }
 
     private func buttonStyle(_ urgency: Urgency, prominent: Bool = false) -> SignalButtonStyle {
-        let signal = signal(urgency)
+        let signal = options.theme == .retro && !options.customColors ? foreground : signal(urgency)
         return SignalButtonStyle(signal: signal, prominent: prominent, scale: scale, foreground: foreground,
-                                 onSignal: options.customColors ? Color(nsColor: NSColor(signal).contrastingText) : Theme.onSignal,
-                                 customColors: options.customColors)
+                                 onSignal: usesPalette ? Color(nsColor: NSColor(signal).contrastingText) : Theme.onSignal,
+                                 customColors: usesPalette, theme: options.theme)
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -291,6 +297,7 @@ struct AlertContent: View {
     private func card(urgency: Urgency, remaining: TimeInterval) -> some View {
         let numbers = countdown(remaining)
         return VStack(alignment: .leading, spacing: 0) {
+            if options.theme == .retro { retroTitleBar.padding(.bottom, 10 * scale) }
             if panelWidth < 600 && scale > 1.25 {
                 // At large text sizes, give the title and metadata the full card width.
                 VStack(alignment: .leading, spacing: 8) {
@@ -318,7 +325,7 @@ struct AlertContent: View {
         }
         .padding(18)
         .foregroundStyle(foreground)
-        .padding(.leading, options.minimal ? 0 : 6)  // clear the signal rim
+        .padding(.leading, options.theme == .original ? 6 : 0)  // clear the signal rim
         .padding(.top, topInset)
         .frame(width: panelWidth, alignment: .topLeading)
         .frame(minHeight: CGFloat(options.height), alignment: .topLeading)
@@ -326,18 +333,19 @@ struct AlertContent: View {
     }
 
     private var title: some View {
-        Text(meeting.title).font(.system(size: 17 * scale, weight: .semibold)).lineLimit(2)
+        Text(meeting.title).font(.system(size: 17 * scale, weight: titleWeight, design: typeDesign)).lineLimit(2)
             .fixedSize(horizontal: false, vertical: true).help(meeting.title)
     }
 
     private func countdownView(_ numbers: (big: String, unit: String), urgency: Urgency) -> some View {
         VStack(alignment: .trailing, spacing: 0) {
             Text(numbers.big)
-                .font(.system(size: 40 * scale, weight: .semibold, design: .rounded).monospacedDigit())
+                .font(.system(size: 40 * scale, weight: options.theme == .blocky ? .black : .semibold,
+                              design: options.theme.squareCorners ? .monospaced : .rounded).monospacedDigit())
                 .foregroundStyle(signal(urgency))
                 .contentTransition(reduceMotion ? .identity : .numericText(countsDown: true))
                 .animation(.snappy, value: numbers.big)
-            Text(numbers.unit).font(.system(size: 12 * scale, weight: .medium, design: .rounded)).foregroundStyle(secondary)
+            Text(numbers.unit).font(.system(size: 12 * scale, weight: .medium, design: typeDesign)).foregroundStyle(secondary)
         }
         .frame(minWidth: 96 * scale, alignment: .trailing)
     }
@@ -347,7 +355,7 @@ struct AlertContent: View {
             Image(systemName: state.escalated ? "bell.and.waves.left.and.right.fill" : urgency.symbol)
                 .font(.system(size: 12 * scale, weight: .semibold))
             Text(state.escalated ? "Not acknowledged — phone alerted" : urgency.word)
-                .font(.system(size: 12 * scale, weight: .semibold, design: .rounded))
+                .font(.system(size: 12 * scale, weight: .semibold, design: options.theme.squareCorners ? .monospaced : .rounded))
                 .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(signal(urgency))
@@ -359,7 +367,7 @@ struct AlertContent: View {
             if let color = meeting.calendarColor, !meeting.calendarTitle.isEmpty {
                 HStack(spacing: 5) {
                     Circle().fill(Color(nsColor: color)).frame(width: 8, height: 8)
-                    Text(meeting.calendarTitle).font(.system(size: 12 * scale, weight: .medium)).lineLimit(1)
+                    Text(meeting.calendarTitle).font(.system(size: 12 * scale, weight: .medium, design: typeDesign)).lineLimit(1)
                 }
             }
             if let url = meeting.joinURL {
@@ -368,8 +376,24 @@ struct AlertContent: View {
                 Label("In person", systemImage: "figure.walk")
             }
         }
-        .font(.system(size: 13 * scale))
+        .font(.system(size: 13 * scale, weight: options.theme == .blocky ? .semibold : .regular, design: typeDesign))
         .foregroundStyle(secondary)
+    }
+
+    private var retroTitleBar: some View {
+        HStack(spacing: 10) {
+            retroStripes
+            Text("MeetAlert").font(.system(size: 12 * scale, weight: .bold, design: .monospaced))
+            retroStripes
+        }
+        .foregroundStyle(foreground)
+        .accessibilityHidden(true)  // decorative chrome; no fake window controls
+    }
+
+    private var retroStripes: some View {
+        VStack(spacing: 2) {
+            ForEach(0..<5) { _ in Rectangle().fill(foreground).frame(height: 1) }
+        }
     }
 
     private func actions(_ urgency: Urgency) -> some View {
@@ -438,36 +462,36 @@ struct AlertContent: View {
     }
 
     private func background(_ urgency: Urgency) -> some View {
-        let radius = Theme.panelRadius
+        let radius: CGFloat = options.theme.squareCorners ? 0 : Theme.panelRadius
         let shape = UnevenRoundedRectangle(cornerRadii: .init(
             topLeading: dockedToTop ? 0 : radius, bottomLeading: radius,
             bottomTrailing: radius, topTrailing: dockedToTop ? 0 : radius), style: .continuous)
         let signal = signal(urgency)
         let wide = state.escalated || urgency == .started
         let solid = options.translucency == 0 || reduceTransparency || contrast == .increased
-        let tint = options.customColors ? Color(nsColor: customBackground)
+        let tint = usesPalette ? Color(nsColor: customBackground)
             : scheme == .dark ? Color(red: 0.05, green: 0.07, blue: 0.13) : .white
         let amount = Double(100 - options.translucency) / 100
         return ZStack(alignment: .leading) {
             if solid {
-                shape.fill(options.customColors ? Color(nsColor: customBackground) : Color(nsColor: .windowBackgroundColor))
+                shape.fill(usesPalette ? Color(nsColor: customBackground) : Color(nsColor: .windowBackgroundColor))
             } else {
-                if !options.customColors && !options.minimal && options.translucency == 55 {
+                if !usesPalette && options.translucency == 55 {
                     // Preserve the original theme at its default setting.
                     shape.fill(.regularMaterial)
                     shape.fill(Theme.ink)
                 } else {
-                    AlertGlassBackground(dark: options.customColors
+                    AlertGlassBackground(dark: usesPalette
                         ? customBackground.contrastingText.hexString == "#FFFFFF" : scheme == .dark)
                         .allowsHitTesting(false).accessibilityHidden(true)
                     shape.fill(tint.opacity(amount))
                 }
-                if scheme == .dark && !options.customColors && !options.minimal {
+                if scheme == .dark && !usesPalette && !options.theme.squareCorners {
                     shape.fill(RadialGradient(colors: [signal.opacity(0.18), .clear],
                                               center: .topLeading, startRadius: 0, endRadius: 340))
                 }
             }
-            if !options.minimal {
+            if options.theme == .original {
                 Rectangle()
                     .fill(signal)
                     .frame(width: wide ? 6 : Theme.rimWidth)
@@ -478,9 +502,20 @@ struct AlertContent: View {
             }
         }
         .clipShape(shape)
-        .overlay(shape.strokeBorder(contrast == .increased ? AnyShapeStyle(foreground)
-                                    : options.minimal ? AnyShapeStyle(foreground.opacity(0.2)) : AnyShapeStyle(signal.opacity(0.55)),
-                                    lineWidth: contrast == .increased ? 2 : Theme.strokeWidth))
+        .overlay {
+            if options.theme == .bold || options.theme == .blocky {
+                shape.strokeBorder(signal, lineWidth: wide ? 6 : 4)
+                    .opacity(pulsing ? 0.65 : 1)
+                    .animation(state.escalated && !reduceMotion
+                               ? .easeInOut(duration: 1).repeatForever(autoreverses: true) : .default, value: pulsing)
+            } else if options.theme == .retro {
+                shape.strokeBorder(foreground, lineWidth: 2)
+                shape.inset(by: 4).strokeBorder(foreground.opacity(0.45), lineWidth: 1)
+            } else {
+                shape.strokeBorder(contrast == .increased ? AnyShapeStyle(foreground) : AnyShapeStyle(signal.opacity(0.55)),
+                                   lineWidth: contrast == .increased ? 2 : Theme.strokeWidth)
+            }
+        }
         .onChange(of: state.escalated) { _, escalated in
             pulsing = escalated && !reduceMotion
         }
@@ -505,9 +540,10 @@ private struct SignalButtonStyle: ButtonStyle {
     var foreground: Color = .primary
     var onSignal: Color = Theme.onSignal
     var customColors = false
+    var theme: AlertAppearance.Preset = .original
 
     func makeBody(configuration: Configuration) -> some View {
-        SignalButtonBody(cfg: configuration, signal: signal, prominent: prominent, scale: scale, foreground: foreground, onSignal: onSignal, customColors: customColors)
+        SignalButtonBody(cfg: configuration, signal: signal, prominent: prominent, scale: scale, foreground: foreground, onSignal: onSignal, customColors: customColors, theme: theme)
     }
 
     private struct SignalButtonBody: View {
@@ -518,22 +554,34 @@ private struct SignalButtonStyle: ButtonStyle {
         let foreground: Color
         let onSignal: Color
         let customColors: Bool
+        let theme: AlertAppearance.Preset
         @State private var hover = false
         @Environment(\.colorSchemeContrast) private var contrast
 
         var body: some View {
+            let shape = RoundedRectangle(cornerRadius: theme.squareCorners ? 0 : 16 * scale)
             cfg.label
-                .font(.system(size: 13 * scale, weight: .semibold))
+                .font(.system(size: 13 * scale, weight: theme == .blocky ? .heavy : .semibold,
+                              design: theme.squareCorners ? .monospaced : .default))
                 .padding(.horizontal, 14 * scale)
                 .frame(height: 32 * scale)
                 .foregroundStyle(prominent ? AnyShapeStyle(onSignal) : AnyShapeStyle(foreground))
                 .background(
-                    Capsule()
+                    shape
                         .fill(prominent ? AnyShapeStyle(signal) : AnyShapeStyle(foreground.opacity(customColors ? 0 : hover ? 0.14 : 0.08)))
-                        .overlay(Capsule().strokeBorder(
-                            prominent ? AnyShapeStyle(.clear)
+                        .overlay(shape.strokeBorder(
+                            theme == .retro ? AnyShapeStyle(foreground)
+                                : prominent ? AnyShapeStyle(.clear)
                                 : contrast == .increased ? AnyShapeStyle(foreground) : AnyShapeStyle(signal.opacity(hover ? 0.7 : 0.35)),
-                            lineWidth: contrast == .increased ? 1.5 : 1))
+                            lineWidth: theme == .blocky ? 2 : contrast == .increased ? 1.5 : 1))
+                        .overlay(alignment: .top) {
+                            if theme == .retro {
+                                Rectangle().fill((prominent ? onSignal : foreground).opacity(0.3))
+                                    .frame(height: 1).padding(3)
+                            }
+                        }
+                        .shadow(color: theme == .retro ? foreground.opacity(0.65) : .clear,
+                                radius: 0, x: cfg.isPressed ? 0 : 2, y: cfg.isPressed ? 0 : 2)
                 )
                 // Keep custom text and fills opaque so hover preserves the calculated contrast.
                 .opacity(!customColors && prominent && hover ? 0.92 : 1)

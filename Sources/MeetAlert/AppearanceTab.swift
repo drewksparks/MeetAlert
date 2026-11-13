@@ -23,22 +23,26 @@ struct AppearanceTab: View {
             }
 
             Section {
-                HStack {
+                Picker("Theme", selection: Binding(
+                    get: { store.config.alertAppearance.theme },
+                    set: {
+                        var appearance = store.config.alertAppearance
+                        appearance.apply($0)
+                        store.config.alertAppearance = appearance
+                    }
+                )) {
                     ForEach(AlertAppearance.Preset.allCases, id: \.self) { preset in
-                        Button(preset.rawValue) {
-                            var appearance = store.config.alertAppearance
-                            appearance.apply(preset)
-                            store.config.alertAppearance = appearance
-                        }
+                        Text(preset.title).tag(preset)
                     }
                 }
+                .pickerStyle(.segmented)
+                Text(store.config.alertAppearance.theme.summary).font(.callout)
                 dimension("Translucency", value: \AlertAppearance.translucency,
                           range: AlertAppearance.translucencyRange, step: 5, unit: "%")
-                Toggle("Minimal decoration", isOn: $store.config.alertAppearance.minimal)
             } header: {
                 Text("Theme")
             } footer: {
-                Text("Presets set the size, buttons and background style; position stays as you set it. 0% is solid; higher values reveal more of the blurred desktop. Text stays opaque. Reduce Transparency and Increase Contrast use a solid background.").formFooter()
+                Text("Themes set decoration, type and translucency. Your size, buttons, colors and position stay as you set them. 0% is solid; higher values reveal more of the blurred desktop. Text stays opaque. Reduce Transparency and Increase Contrast use a solid background.").formFooter()
             }
 
             Section {

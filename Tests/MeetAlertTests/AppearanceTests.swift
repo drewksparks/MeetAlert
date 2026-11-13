@@ -72,29 +72,42 @@ final class AppearanceTests: XCTestCase {
         XCTAssertEqual(config.alertAppearance.background, "#16324F")
     }
 
-    func testPresetsPreservePositionAndSavedColors() throws {
+    func testThemesRoundTripWithoutResettingLayoutButtonsColorsOrPosition() throws {
         var appearance = AlertAppearance()
+        appearance.width = 888; appearance.height = 240; appearance.textScale = 125
+        appearance.showSnooze = false; appearance.showIgnore = false
         appearance.offsetX = -120; appearance.offsetY = 0
         appearance.topEdge = true; appearance.slideFromTop = true
-        appearance.background = "#16324F"
-        appearance.apply(.minimal)
-        XCTAssertTrue(appearance.minimal)
-        XCTAssertFalse(appearance.showSnooze)
-        XCTAssertFalse(appearance.showIgnore)
-        XCTAssertTrue(appearance.showDismiss)
-        appearance.apply(.solid)
-        XCTAssertEqual(appearance.translucency, 0)
-        XCTAssertFalse(appearance.minimal)
-        appearance.apply(.original)
-        XCTAssertEqual(appearance.translucency, AlertAppearance().translucency)
-        XCTAssertTrue(appearance.showSnooze)
-        XCTAssertEqual(appearance.offsetX, -120)
-        XCTAssertEqual(appearance.offsetY, 0)
-        XCTAssertTrue(appearance.topEdge)
-        XCTAssertTrue(appearance.slideFromTop)
-        XCTAssertEqual(appearance.background, "#16324F")
-        let decoded = try JSONDecoder().decode(AlertAppearance.self, from: JSONEncoder().encode(appearance))
-        XCTAssertEqual(decoded, appearance)
+        appearance.customColors = true; appearance.background = "#16324F"
+        for theme in AlertAppearance.Preset.allCases {
+            appearance.apply(theme)
+            XCTAssertEqual(appearance.theme, theme)
+            XCTAssertEqual(appearance.translucency, theme.squareCorners ? 0 : 55)
+            XCTAssertEqual(appearance.width, 888)
+            XCTAssertEqual(appearance.height, 240)
+            XCTAssertEqual(appearance.textScale, 125)
+            XCTAssertFalse(appearance.showSnooze)
+            XCTAssertFalse(appearance.showIgnore)
+            XCTAssertEqual(appearance.offsetX, -120)
+            XCTAssertEqual(appearance.offsetY, 0)
+            XCTAssertTrue(appearance.topEdge)
+            XCTAssertTrue(appearance.slideFromTop)
+            XCTAssertTrue(appearance.customColors)
+            XCTAssertEqual(appearance.background, "#16324F")
+            let decoded = try JSONDecoder().decode(AlertAppearance.self, from: JSONEncoder().encode(appearance))
+            XCTAssertEqual(decoded, appearance)
+        }
+    }
+
+    func testOldAndUnknownThemesPreserveOtherAppearanceChoices() throws {
+        for field in ["", ##""theme":"future-theme","##] {
+            let json = "{" + field + ##""minimal":true,"width":480,"translucency":70,"showSnooze":false}"##
+            let appearance = try JSONDecoder().decode(AlertAppearance.self, from: Data(json.utf8))
+            XCTAssertEqual(appearance.theme, .original)
+            XCTAssertEqual(appearance.width, 480)
+            XCTAssertEqual(appearance.translucency, 70)
+            XCTAssertFalse(appearance.showSnooze)
+        }
     }
 
     func testInvalidPositionAndTranslucencyAreClamped() throws {
@@ -165,12 +178,19 @@ final class AppearanceTests: XCTestCase {
         custom.customColors = true; custom.translucency = 0; custom.background = "#16324F"; custom.upcoming = "#FFFF00"
         var lowContrast = compact
         lowContrast.customColors = true; lowContrast.translucency = 0; lowContrast.background = "#FFFFFF"; lowContrast.upcoming = "#FFFFFF"
-        var minimal = AlertAppearance(); minimal.apply(.minimal)
-        var solid = AlertAppearance(); solid.apply(.solid)
         var glass = custom; glass.translucency = 90
-        for (name, appearance) in [("default", AlertAppearance()), ("compact", compact), ("large-text", largeText),
-                                   ("hidden", hidden), ("custom", custom), ("low-contrast", lowContrast),
-                                   ("minimal", minimal), ("solid", solid), ("glass", glass)] {
+        var samples: [(String, AlertAppearance, NSAppearance.Name)] = [
+            ("default", AlertAppearance(), .aqua), ("compact", compact, .aqua), ("large-text", largeText, .aqua),
+            ("hidden", hidden, .aqua), ("custom", custom, .aqua), ("low-contrast", lowContrast, .aqua), ("glass", glass, .aqua)
+        ]
+        for theme in AlertAppearance.Preset.allCases {
+            var appearance = AlertAppearance(); appearance.apply(theme)
+            samples.append((theme.rawValue, appearance, .aqua))
+            samples.append((theme.rawValue + "-dark", appearance, .darkAqua))
+            appearance.width = 480; appearance.textScale = 200
+            samples.append((theme.rawValue + "-large", appearance, .aqua))
+        }
+        for (name, appearance, scheme) in samples {
             let start = Date().addingTimeInterval(180)
             let meeting = Store.Meeting(key: "sample", title: "Design review and planning for the next release", start: start,
                                         end: start.addingTimeInterval(1800), hasPhysicalLocation: false,
@@ -180,7 +200,7 @@ final class AppearanceTests: XCTestCase {
                 onSnooze1: {}, onSnooze5: {}, onSnoozeStart: {}, onIgnore: {}, onDismiss: {}, appearance: appearance))
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: appearance.width, height: 600),
                                   styleMask: [.borderless], backing: .buffered, defer: true)
-            window.appearance = NSAppearance(named: .aqua)
+            window.appearance = NSAppearance(named: scheme)
             window.contentView = host
             host.layoutSubtreeIfNeeded()
             let size = host.fittingSize

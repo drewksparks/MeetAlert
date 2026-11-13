@@ -10,11 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Settings → Appearance**: popup size presets, custom width/minimum height, text/button scaling, and per-button visibility. Hidden actions stay in More with their keyboard shortcuts.
 - Optional custom popup background and urgency colors, with automatic text contrast adjustment.
-- Original, Solid and Minimal presets; adjustable background translucency with opaque text and a solid fallback for Reduce Transparency/Increase Contrast.
+- Original, Bold (full accent border), Blocky (square corners and heavy type), and Retro (classic Macintosh-inspired) themes; adjustable background translucency with opaque text and a solid fallback for Reduce Transparency/Increase Contrast.
 - Horizontal/vertical popup positioning, a bezel-flush Dock to Top option with notch-safe content, and an optional slide from the top that respects Reduce Motion.
 - A sample-alert preview and an appearance-only reset. Open alerts update when appearance changes; buttons wrap at compact sizes.
 
 ### Fixed
+- Saved preferences survive normal app launches: loading Keychain credentials no longer overwrites config.json with defaults before reading it.
 - A new reminder for the same meeting occurrence replaces its earlier popup and cancels superseded escalations and snoozes. An expired snooze no longer opens a duplicate beside an already visible reminder. Different meetings still have separate alerts.
 
 ## [1.9.2] - 2026-11-12

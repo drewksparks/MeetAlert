@@ -7,7 +7,7 @@ struct AlertAppearance: Codable, Equatable {
     var height = 168
     var textScale = 100
     var translucency = 55
-    var minimal = false
+    var theme: Preset = .original
     var offsetX = 0
     var offsetY = 12
     var topEdge = false
@@ -34,7 +34,7 @@ struct AlertAppearance: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case width, height, textScale, showJoin, showSnooze, showDismiss, showIgnore
         case customColors, background, upcoming, imminent, started
-        case translucency, minimal, offsetX, offsetY, topEdge, slideFromTop
+        case translucency, theme, offsetX, offsetY, topEdge, slideFromTop
     }
 
     init(from decoder: Decoder) throws {
@@ -50,7 +50,7 @@ struct AlertAppearance: Codable, Equatable {
         customColors = (try? c.decode(Bool.self, forKey: .customColors)) ?? customColors
         // Earlier custom-color configs were opaque; retain that when migrating.
         translucency = (try? c.decode(Int.self, forKey: .translucency)) ?? (customColors ? 0 : translucency)
-        minimal = (try? c.decode(Bool.self, forKey: .minimal)) ?? minimal
+        theme = (try? c.decode(Preset.self, forKey: .theme)) ?? .original
         offsetX = (try? c.decode(Int.self, forKey: .offsetX)) ?? offsetX
         offsetY = (try? c.decode(Int.self, forKey: .offsetY)) ?? offsetY
         topEdge = (try? c.decode(Bool.self, forKey: .topEdge)) ?? topEdge
@@ -77,22 +77,25 @@ struct AlertAppearance: Codable, Equatable {
         return result
     }
 
-    enum Preset: String, CaseIterable {
-        case original = "Original", solid = "Solid", minimal = "Minimal"
+    enum Preset: String, Codable, CaseIterable {
+        case original, bold, blocky, retro
+
+        var title: String { rawValue.capitalized }
+        var summary: String {
+            switch self {
+            case .original: "The familiar rounded popup with an accent on the left."
+            case .bold: "A thick accent border around the entire popup."
+            case .blocky: "Square corners, heavy type and rectangular buttons."
+            case .retro: "Classic Macintosh-inspired gray, striped title bar and beveled buttons."
+            }
+        }
+        var squareCorners: Bool { self == .blocky || self == .retro }
     }
 
     mutating func apply(_ preset: Preset) {
-        // Presets change presentation only; preserve the user's position and saved color choices.
-        width = preset == .minimal ? 480 : 640
-        height = 168
-        textScale = 100
-        minimal = preset == .minimal
-        translucency = preset == .solid ? 0 : preset == .minimal ? 70 : 55
-        customColors = false
-        showJoin = true
-        showDismiss = true
-        showSnooze = preset != .minimal
-        showIgnore = preset != .minimal
+        // Theme selection must not undo a user's layout, hidden buttons, colors or position.
+        theme = preset
+        translucency = preset == .blocky || preset == .retro ? 0 : 55
     }
 
     var scale: CGFloat { CGFloat(normalized.textScale) / 100 }
