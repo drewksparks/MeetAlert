@@ -216,9 +216,19 @@ exactly one. Nothing about the layout changes on hover; only the buttons themsel
 - Show or hide Join, Snooze, Dismiss and Ignore in the main row. Hidden actions remain in
   **More**, which always stays visible. Existing keyboard shortcuts still work after clicking
   the panel to give it focus. Phone notification actions are unaffected.
-- Enable custom colors for the background and each urgency state. The background becomes
-  opaque; text uses a contrasting color, and signal brightness is adjusted when necessary for
-  readability. With custom colors off, the original system-aware colors remain in use.
+- Start with **Original**, **Solid**, or **Minimal**. Presets set the size, visible buttons and
+  background style while preserving position and saved custom colors. Minimal removes the
+  colored rim and glow and moves Snooze/Ignore into More.
+- Adjust **Translucency** from 0% (solid) to 100% (blurred material with no added tint).
+  Text and buttons stay opaque. Reduce Transparency and Increase Contrast force a solid fill.
+- Enable custom colors for the background and each urgency state. Text and signal contrast is
+  adjusted against the chosen background color. Use 0% translucency for predictable contrast
+  regardless of the windows behind the alert. Existing custom-color configs remain opaque.
+- Set a horizontal offset from the display center and a distance down from the top. By default,
+  the top means the usable area below the menu bar. **Dock to Top** uses the actual screen edge,
+  sets both offsets to zero and enables the downward slide. It may cover the menu bar while
+  visible; content is inset below the camera notch. Controls clamp the popup to the display.
+  **Reset Position** restores the original placement. Reduce Motion disables sliding.
 - **Preview Alert** shows a sample in any of the three urgency states. Its actions close the
   sample without opening a meeting, sending a push or changing calendar state.
 - **Reset Appearance to Defaults** restores just these appearance preferences.
@@ -227,7 +237,9 @@ The existing Reduce Motion and Increase Contrast support also applies to customi
 
 These preferences are saved under `alertAppearance` in `config.json`. Its fields are `width`
 (640), `height` (168), `textScale` (100), `showJoin`, `showSnooze`, `showDismiss`, `showIgnore`
-(all true), `customColors` (false), and four `#RRGGBB` colors: `background` (`#FFFFFF`),
+(all true), `translucency` (55, range 0–100), `minimal` (false), `offsetX` (0, range
+−3000–3000 pt), `offsetY` (12, range 0–1600 pt), `topEdge` and `slideFromTop` (both false),
+`customColors` (false), and four `#RRGGBB` colors: `background` (`#FFFFFF`),
 `upcoming` (`#006A85`), `imminent` (`#9A5B00`), `started` (`#C41E17`). Missing or invalid
 appearance fields use defaults; numeric values are constrained to the ranges above.
 
@@ -343,7 +355,7 @@ temporary directory along with `MEETALERT_TEST=1`. Without it, test mode uses
 
 Run the appearance config and contrast tests with `swift test --filter AppearanceTests`.
 To also render sample popups at default/compact sizes, 200% text size, all buttons hidden,
-and custom colors, set `MEETALERT_APPEARANCE_SCREENSHOTS=/tmp/meetalert-appearance`.
+custom colors, and the new presets, set `MEETALERT_APPEARANCE_SCREENSHOTS=/tmp/meetalert-appearance`.
 These screenshots use synthetic data and do not show windows or send notifications.
 
 ## Google Calendar (and any other calendar)

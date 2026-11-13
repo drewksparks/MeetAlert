@@ -65,6 +65,90 @@ final class AppearanceTests: XCTestCase {
         XCTAssertEqual(color.readable(on: .white).hexString, color.hexString)
     }
 
+    func testExistingCustomColorsRemainOpaqueWhenDecodingOldConfig() throws {
+        let data = Data(##"{"alertAppearance":{"customColors":true,"background":"#16324F"}}"##.utf8)
+        let config = try JSONDecoder().decode(Store.Config.self, from: data)
+        XCTAssertEqual(config.alertAppearance.translucency, 0)
+        XCTAssertEqual(config.alertAppearance.background, "#16324F")
+    }
+
+    func testPresetsPreservePositionAndSavedColors() throws {
+        var appearance = AlertAppearance()
+        appearance.offsetX = -120; appearance.offsetY = 0
+        appearance.topEdge = true; appearance.slideFromTop = true
+        appearance.background = "#16324F"
+        appearance.apply(.minimal)
+        XCTAssertTrue(appearance.minimal)
+        XCTAssertFalse(appearance.showSnooze)
+        XCTAssertFalse(appearance.showIgnore)
+        XCTAssertTrue(appearance.showDismiss)
+        appearance.apply(.solid)
+        XCTAssertEqual(appearance.translucency, 0)
+        XCTAssertFalse(appearance.minimal)
+        appearance.apply(.original)
+        XCTAssertEqual(appearance.translucency, AlertAppearance().translucency)
+        XCTAssertTrue(appearance.showSnooze)
+        XCTAssertEqual(appearance.offsetX, -120)
+        XCTAssertEqual(appearance.offsetY, 0)
+        XCTAssertTrue(appearance.topEdge)
+        XCTAssertTrue(appearance.slideFromTop)
+        XCTAssertEqual(appearance.background, "#16324F")
+        let decoded = try JSONDecoder().decode(AlertAppearance.self, from: JSONEncoder().encode(appearance))
+        XCTAssertEqual(decoded, appearance)
+    }
+
+    func testInvalidPositionAndTranslucencyAreClamped() throws {
+        let data = Data(##"{"translucency":1000,"offsetX":-99999,"offsetY":-300,"topEdge":"bad"}"##.utf8)
+        let appearance = try JSONDecoder().decode(AlertAppearance.self, from: data)
+        XCTAssertEqual(appearance.translucency, 100)
+        XCTAssertEqual(appearance.offsetX, -3000)
+        XCTAssertEqual(appearance.offsetY, 0)
+        XCTAssertFalse(appearance.topEdge)
+    }
+
+    func testTopDockUsesScreenEdgeInsteadOfMenuBarAndStacksDownward() {
+        let screen = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let visible = CGRect(x: 0, y: 40, width: 1440, height: 836)
+        let size = CGSize(width: 640, height: 168)
+        var appearance = AlertAppearance()
+        let normal = AlertPlacement.frame(size: size, screen: screen, visible: visible, appearance: appearance)
+        XCTAssertEqual(normal.maxY, visible.maxY - 12)
+        appearance.topEdge = true; appearance.offsetY = 0; appearance.offsetX = -100
+        let top = AlertPlacement.frame(size: size, screen: screen, visible: visible, appearance: appearance)
+        XCTAssertEqual(top.maxY, screen.maxY)
+        XCTAssertEqual(top.midX, screen.midX - 100)
+        let second = AlertPlacement.frame(size: size, screen: screen, visible: visible,
+                                          appearance: appearance, precedingHeight: size.height + 10)
+        XCTAssertEqual(second.maxY, top.minY - 10)
+    }
+
+    func testPositionStaysOnSecondaryDisplayAndAdaptsToNarrowScreen() {
+        let screen = CGRect(x: -1280, y: -100, width: 1280, height: 800)
+        let size = CGSize(width: 640, height: 168)
+        var appearance = AlertAppearance()
+        appearance.topEdge = true; appearance.offsetX = 3000; appearance.offsetY = 1600
+        let right = AlertPlacement.frame(size: size, screen: screen, visible: screen, appearance: appearance)
+        XCTAssertEqual(right.maxX, screen.maxX - 12)
+        XCTAssertEqual(right.minY, screen.minY)
+        appearance.offsetX = -3000
+        let left = AlertPlacement.frame(size: size, screen: screen, visible: screen, appearance: appearance)
+        XCTAssertEqual(left.minX, screen.minX + 12)
+        let narrow = CGRect(x: 0, y: 0, width: 500, height: 800)
+        let fit = AlertPlacement.frame(size: size, screen: narrow, visible: narrow, appearance: appearance)
+        XCTAssertEqual(fit.width, 476)
+        XCTAssertTrue(narrow.contains(fit))
+    }
+
+    func testSlideStartsAboveDisplayAndRespectsReduceMotion() {
+        let screen = CGRect(x: -1280, y: -100, width: 1280, height: 800)
+        let final = CGRect(x: -960, y: 532, width: 640, height: 168)
+        let entrance = AlertPlacement.entranceFrame(final: final, screen: screen, slideFromTop: true, reduceMotion: false)
+        XCTAssertEqual(entrance.minY, screen.maxY)
+        XCTAssertEqual(entrance.minX, final.minX)
+        XCTAssertEqual(AlertPlacement.entranceFrame(final: final, screen: screen,
+                                                   slideFromTop: true, reduceMotion: true), final)
+    }
+
     /// Optional offscreen QA, with no real calendar, Keychain, or notification activity.
     /// MEETALERT_APPEARANCE_SCREENSHOTS=/tmp/meetalert-appearance swift test --filter AppearanceTests/testRender
     func testRender() throws {
@@ -78,11 +162,15 @@ final class AppearanceTests: XCTestCase {
         var hidden = compact
         hidden.showJoin = false; hidden.showSnooze = false; hidden.showDismiss = false; hidden.showIgnore = false
         var custom = AlertAppearance()
-        custom.customColors = true; custom.background = "#16324F"; custom.upcoming = "#FFFF00"
+        custom.customColors = true; custom.translucency = 0; custom.background = "#16324F"; custom.upcoming = "#FFFF00"
         var lowContrast = compact
-        lowContrast.customColors = true; lowContrast.background = "#FFFFFF"; lowContrast.upcoming = "#FFFFFF"
+        lowContrast.customColors = true; lowContrast.translucency = 0; lowContrast.background = "#FFFFFF"; lowContrast.upcoming = "#FFFFFF"
+        var minimal = AlertAppearance(); minimal.apply(.minimal)
+        var solid = AlertAppearance(); solid.apply(.solid)
+        var glass = custom; glass.translucency = 90
         for (name, appearance) in [("default", AlertAppearance()), ("compact", compact), ("large-text", largeText),
-                                   ("hidden", hidden), ("custom", custom), ("low-contrast", lowContrast)] {
+                                   ("hidden", hidden), ("custom", custom), ("low-contrast", lowContrast),
+                                   ("minimal", minimal), ("solid", solid), ("glass", glass)] {
             let start = Date().addingTimeInterval(180)
             let meeting = Store.Meeting(key: "sample", title: "Design review and planning for the next release", start: start,
                                         end: start.addingTimeInterval(1800), hasPhysicalLocation: false,

@@ -71,10 +71,11 @@ enum AlertPanel {
         let final = frame(forIndex: active.count - 1, screen: screen)
         let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         panel.alphaValue = 0
-        panel.setFrame(reduce ? final : final.offsetBy(dx: 0, dy: 14), display: false)
+        panel.setFrame(AlertPlacement.entranceFrame(final: final, screen: screen.frame,
+                                                   slideFromTop: appearance.slideFromTop, reduceMotion: reduce), display: false)
         panel.orderFrontRegardless()
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = reduce ? 0.12 : 0.28
+            ctx.duration = reduce ? 0.12 : appearance.slideFromTop ? 0.4 : 0.28
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
             panel.animator().setFrame(final, display: true)
@@ -157,6 +158,7 @@ enum AlertPanel {
             ctx.duration = reduce ? 0 : 0.2
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             for (i, entry) in active.enumerated() {
+                fit(entry.panel, appearance: entry.appearance, screen: screen)
                 entry.panel.animator().setFrame(frame(forIndex: i, screen: screen), display: true)
             }
         }
@@ -171,15 +173,19 @@ enum AlertPanel {
     private static func frame(forIndex index: Int, screen: NSScreen) -> NSRect {
         let size = active[index].panel.frame.size
         let preceding = active.prefix(index).reduce(CGFloat(0)) { $0 + $1.panel.frame.height + gap }
-        let x = screen.visibleFrame.midX - size.width / 2
-        let y = max(screen.visibleFrame.minY + margin, screen.visibleFrame.maxY - margin - preceding - size.height)
-        return NSRect(origin: CGPoint(x: x, y: y), size: size)
+        return AlertPlacement.frame(size: size, screen: screen.frame, visible: screen.visibleFrame,
+                                    appearance: active[index].appearance, precedingHeight: preceding)
     }
 
     private static func fit(_ panel: NSPanel, appearance: AlertAppearance, screen: NSScreen) {
         guard let host = panel.contentView as? NSHostingView<AlertContent> else { return }
         host.rootView.appearance = appearance.normalized
-        host.rootView.availableWidth = screen.visibleFrame.width - 2 * margin
+        let area = appearance.topEdge ? screen.frame : screen.visibleFrame
+        host.rootView.availableWidth = area.width - 2 * margin
+        let first = active.isEmpty || active.first?.panel === panel
+        host.rootView.dockedToTop = first && appearance.topEdge && appearance.offsetY == 0
+        host.rootView.topInset = first && appearance.topEdge
+            ? max(0, screen.safeAreaInsets.top - CGFloat(appearance.normalized.offsetY)) : 0
         host.layoutSubtreeIfNeeded()
         panel.setContentSize(host.fittingSize)
     }
@@ -243,6 +249,8 @@ struct AlertContent: View {
     let onDismiss: () -> Void
     var appearance = AlertAppearance()
     var availableWidth: CGFloat? = nil
+    var dockedToTop = false
+    var topInset: CGFloat = 0
 
     private var options: AlertAppearance { appearance.normalized }
     private var scale: CGFloat { options.scale }
@@ -265,6 +273,7 @@ struct AlertContent: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.colorScheme) private var scheme
     @State private var pulsing = false
@@ -309,7 +318,8 @@ struct AlertContent: View {
         }
         .padding(18)
         .foregroundStyle(foreground)
-        .padding(.leading, 6)  // clear the signal rim
+        .padding(.leading, options.minimal ? 0 : 6)  // clear the signal rim
+        .padding(.top, topInset)
         .frame(width: panelWidth, alignment: .topLeading)
         .frame(minHeight: CGFloat(options.height), alignment: .topLeading)
         .background(background(urgency))
@@ -428,32 +438,48 @@ struct AlertContent: View {
     }
 
     private func background(_ urgency: Urgency) -> some View {
-        let shape = RoundedRectangle(cornerRadius: Theme.panelRadius, style: .continuous)
+        let radius = Theme.panelRadius
+        let shape = UnevenRoundedRectangle(cornerRadii: .init(
+            topLeading: dockedToTop ? 0 : radius, bottomLeading: radius,
+            bottomTrailing: radius, topTrailing: dockedToTop ? 0 : radius), style: .continuous)
         let signal = signal(urgency)
         let wide = state.escalated || urgency == .started
+        let solid = options.translucency == 0 || reduceTransparency || contrast == .increased
+        let tint = options.customColors ? Color(nsColor: customBackground)
+            : scheme == .dark ? Color(red: 0.05, green: 0.07, blue: 0.13) : .white
+        let amount = Double(100 - options.translucency) / 100
         return ZStack(alignment: .leading) {
-            if options.customColors {
-                shape.fill(Color(nsColor: customBackground))
-            } else if contrast == .increased {
-                shape.fill(Color(nsColor: .windowBackgroundColor))
+            if solid {
+                shape.fill(options.customColors ? Color(nsColor: customBackground) : Color(nsColor: .windowBackgroundColor))
             } else {
-                shape.fill(.regularMaterial)
-                shape.fill(Theme.ink)
-                if scheme == .dark {
+                if !options.customColors && !options.minimal && options.translucency == 55 {
+                    // Preserve the original theme at its default setting.
+                    shape.fill(.regularMaterial)
+                    shape.fill(Theme.ink)
+                } else {
+                    AlertGlassBackground(dark: options.customColors
+                        ? customBackground.contrastingText.hexString == "#FFFFFF" : scheme == .dark)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                    shape.fill(tint.opacity(amount))
+                }
+                if scheme == .dark && !options.customColors && !options.minimal {
                     shape.fill(RadialGradient(colors: [signal.opacity(0.18), .clear],
                                               center: .topLeading, startRadius: 0, endRadius: 340))
                 }
             }
-            Rectangle()
-                .fill(signal)
-                .frame(width: wide ? 6 : Theme.rimWidth)
-                .opacity(pulsing ? 0.5 : 1)
-                .animation(state.escalated && !reduceMotion
-                           ? .easeInOut(duration: 1).repeatForever(autoreverses: true) : .default,
-                           value: pulsing)
+            if !options.minimal {
+                Rectangle()
+                    .fill(signal)
+                    .frame(width: wide ? 6 : Theme.rimWidth)
+                    .opacity(pulsing ? 0.5 : 1)
+                    .animation(state.escalated && !reduceMotion
+                               ? .easeInOut(duration: 1).repeatForever(autoreverses: true) : .default,
+                               value: pulsing)
+            }
         }
         .clipShape(shape)
-        .overlay(shape.strokeBorder(contrast == .increased ? AnyShapeStyle(foreground) : AnyShapeStyle(signal.opacity(0.55)),
+        .overlay(shape.strokeBorder(contrast == .increased ? AnyShapeStyle(foreground)
+                                    : options.minimal ? AnyShapeStyle(foreground.opacity(0.2)) : AnyShapeStyle(signal.opacity(0.55)),
                                     lineWidth: contrast == .increased ? 2 : Theme.strokeWidth))
         .onChange(of: state.escalated) { _, escalated in
             pulsing = escalated && !reduceMotion
@@ -515,5 +541,23 @@ private struct SignalButtonStyle: ButtonStyle {
                 .animation(.easeOut(duration: 0.12), value: hover)
                 .onHover { hover = $0 }
         }
+    }
+}
+
+/// Native behind-window blur. Only the background is translucent; controls remain fully opaque.
+private struct AlertGlassBackground: NSViewRepresentable {
+    var dark: Bool
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.blendingMode = .behindWindow
+        view.material = .hudWindow
+        view.state = .active
+        view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        return view
+    }
+
+    func updateNSView(_ view: NSVisualEffectView, context: Context) {
+        view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
     }
 }

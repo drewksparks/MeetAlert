@@ -24,6 +24,54 @@ struct AppearanceTab: View {
 
             Section {
                 HStack {
+                    ForEach(AlertAppearance.Preset.allCases, id: \.self) { preset in
+                        Button(preset.rawValue) {
+                            var appearance = store.config.alertAppearance
+                            appearance.apply(preset)
+                            store.config.alertAppearance = appearance
+                        }
+                    }
+                }
+                dimension("Translucency", value: \AlertAppearance.translucency,
+                          range: AlertAppearance.translucencyRange, step: 5, unit: "%")
+                Toggle("Minimal decoration", isOn: $store.config.alertAppearance.minimal)
+            } header: {
+                Text("Theme")
+            } footer: {
+                Text("Presets set the size, buttons and background style; position stays as you set it. 0% is solid; higher values reveal more of the blurred desktop. Text stays opaque. Reduce Transparency and Increase Contrast use a solid background.").formFooter()
+            }
+
+            Section {
+                Toggle("Use screen edge (over menu bar)", isOn: $store.config.alertAppearance.topEdge)
+                position("Horizontal offset", value: \AlertAppearance.offsetX, range: AlertAppearance.offsetXRange)
+                position("Distance from top", value: \AlertAppearance.offsetY, range: AlertAppearance.offsetYRange)
+                Toggle("Slide in from top", isOn: $store.config.alertAppearance.slideFromTop)
+                HStack {
+                    Button("Dock to Top") {
+                        var appearance = store.config.alertAppearance
+                        appearance.topEdge = true
+                        appearance.offsetX = 0
+                        appearance.offsetY = 0
+                        appearance.slideFromTop = true
+                        store.config.alertAppearance = appearance
+                    }
+                    Button("Reset Position") {
+                        var appearance = store.config.alertAppearance
+                        appearance.topEdge = false
+                        appearance.offsetX = 0
+                        appearance.offsetY = 12
+                        appearance.slideFromTop = false
+                        store.config.alertAppearance = appearance
+                    }
+                }
+            } header: {
+                Text("Position & Motion")
+            } footer: {
+                Text("Horizontal offset is measured from the display’s center; negative moves left. Distance is measured down from the menu bar or screen edge. Dock to Top sits flush with the bezel and may cover the menu bar while visible. Content stays below the camera notch. Reduce Motion disables the slide.").formFooter()
+            }
+
+            Section {
+                HStack {
                     Text("Size presets")
                     Spacer()
                     Button("Compact") { setSize(width: 480, height: 168, scale: 100) }
@@ -61,7 +109,7 @@ struct AppearanceTab: View {
             } header: {
                 Text("Colors")
             } footer: {
-                Text("Off uses the original colors for your Mac’s appearance. Custom colors use an opaque background; text contrast is adjusted automatically. Urgency is still shown in words and icons.").formFooter()
+                Text("Off uses the original colors for your Mac’s appearance. Custom colors adjust text contrast against your chosen background. Use 0% translucency for predictable contrast over any desktop. Urgency is still shown in words and icons.").formFooter()
             }
 
             Section {
@@ -84,6 +132,22 @@ struct AppearanceTab: View {
                 .accessibilityValue("\(store.config.alertAppearance[keyPath: key]) \(unit)")
             Text("\(store.config.alertAppearance[keyPath: key]) \(unit)")
                 .monospacedDigit().frame(width: 70, alignment: .trailing).accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func position(_ title: String, value key: WritableKeyPath<AlertAppearance, Int>,
+                          range: ClosedRange<Int>) -> some View {
+        HStack {
+            Text(title).accessibilityHidden(true)
+            Spacer()
+            TextField(title, value: Binding(
+                get: { store.config.alertAppearance[keyPath: key] },
+                set: { store.config.alertAppearance[keyPath: key] = min(max($0, range.lowerBound), range.upperBound) }
+            ), format: .number)
+                .labelsHidden().frame(width: 90)
+                .accessibilityLabel("\(title), points")
+            Text("pt").accessibilityHidden(true)
         }
         .accessibilityElement(children: .contain)
     }

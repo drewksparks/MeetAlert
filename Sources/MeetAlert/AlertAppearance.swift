@@ -6,6 +6,12 @@ struct AlertAppearance: Codable, Equatable {
     var width = 640
     var height = 168
     var textScale = 100
+    var translucency = 55
+    var minimal = false
+    var offsetX = 0
+    var offsetY = 12
+    var topEdge = false
+    var slideFromTop = false
     var showJoin = true
     var showSnooze = true
     var showDismiss = true
@@ -19,12 +25,16 @@ struct AlertAppearance: Codable, Equatable {
     static let widthRange = 480...1200
     static let heightRange = 168...480
     static let textScaleRange = 100...200
+    static let translucencyRange = 0...100
+    static let offsetXRange = -3000...3000
+    static let offsetYRange = 0...1600
 
     init() {}
 
     private enum CodingKeys: String, CodingKey {
         case width, height, textScale, showJoin, showSnooze, showDismiss, showIgnore
         case customColors, background, upcoming, imminent, started
+        case translucency, minimal, offsetX, offsetY, topEdge, slideFromTop
     }
 
     init(from decoder: Decoder) throws {
@@ -38,6 +48,13 @@ struct AlertAppearance: Codable, Equatable {
         showDismiss = (try? c.decode(Bool.self, forKey: .showDismiss)) ?? showDismiss
         showIgnore = (try? c.decode(Bool.self, forKey: .showIgnore)) ?? showIgnore
         customColors = (try? c.decode(Bool.self, forKey: .customColors)) ?? customColors
+        // Earlier custom-color configs were opaque; retain that when migrating.
+        translucency = (try? c.decode(Int.self, forKey: .translucency)) ?? (customColors ? 0 : translucency)
+        minimal = (try? c.decode(Bool.self, forKey: .minimal)) ?? minimal
+        offsetX = (try? c.decode(Int.self, forKey: .offsetX)) ?? offsetX
+        offsetY = (try? c.decode(Int.self, forKey: .offsetY)) ?? offsetY
+        topEdge = (try? c.decode(Bool.self, forKey: .topEdge)) ?? topEdge
+        slideFromTop = (try? c.decode(Bool.self, forKey: .slideFromTop)) ?? slideFromTop
         background = (try? c.decode(String.self, forKey: .background)) ?? background
         upcoming = (try? c.decode(String.self, forKey: .upcoming)) ?? upcoming
         imminent = (try? c.decode(String.self, forKey: .imminent)) ?? imminent
@@ -50,11 +67,32 @@ struct AlertAppearance: Codable, Equatable {
         result.width = min(max(width, Self.widthRange.lowerBound), Self.widthRange.upperBound)
         result.height = min(max(height, Self.heightRange.lowerBound), Self.heightRange.upperBound)
         result.textScale = min(max(textScale, Self.textScaleRange.lowerBound), Self.textScaleRange.upperBound)
+        result.translucency = min(max(translucency, 0), 100)
+        result.offsetX = min(max(offsetX, Self.offsetXRange.lowerBound), Self.offsetXRange.upperBound)
+        result.offsetY = min(max(offsetY, Self.offsetYRange.lowerBound), Self.offsetYRange.upperBound)
         let defaults = Self()
         for key in [\Self.background, \.upcoming, \.imminent, \.started] {
             result[keyPath: key] = NSColor(hex: self[keyPath: key])?.hexString ?? defaults[keyPath: key]
         }
         return result
+    }
+
+    enum Preset: String, CaseIterable {
+        case original = "Original", solid = "Solid", minimal = "Minimal"
+    }
+
+    mutating func apply(_ preset: Preset) {
+        // Presets change presentation only; preserve the user's position and saved color choices.
+        width = preset == .minimal ? 480 : 640
+        height = 168
+        textScale = 100
+        minimal = preset == .minimal
+        translucency = preset == .solid ? 0 : preset == .minimal ? 70 : 55
+        customColors = false
+        showJoin = true
+        showDismiss = true
+        showSnooze = preset != .minimal
+        showIgnore = preset != .minimal
     }
 
     var scale: CGFloat { CGFloat(normalized.textScale) / 100 }
@@ -125,5 +163,24 @@ struct AlertFlowLayout: Layout {
             rowHeight = max(rowHeight, size.height)
         }
         return (CGSize(width: width ?? usedWidth, height: y + rowHeight), positions)
+    }
+}
+
+/// Coordinate math is independent of NSScreen so secondary displays and edge clamping are testable.
+enum AlertPlacement {
+    static func frame(size: CGSize, screen: CGRect, visible: CGRect,
+                      appearance: AlertAppearance, precedingHeight: CGFloat = 0) -> CGRect {
+        let options = appearance.normalized
+        let area = options.topEdge ? screen : visible
+        let width = min(size.width, max(1, area.width - 24))
+        let x = min(max(area.midX - width / 2 + CGFloat(options.offsetX), area.minX + 12), area.maxX - width - 12)
+        let y = max(area.minY, area.maxY - CGFloat(options.offsetY) - precedingHeight - size.height)
+        return CGRect(x: x, y: y, width: width, height: size.height)
+    }
+
+    static func entranceFrame(final: CGRect, screen: CGRect, slideFromTop: Bool, reduceMotion: Bool) -> CGRect {
+        guard !reduceMotion else { return final }
+        return slideFromTop ? CGRect(x: final.minX, y: screen.maxY, width: final.width, height: final.height)
+            : final.offsetBy(dx: 0, dy: 14)
     }
 }

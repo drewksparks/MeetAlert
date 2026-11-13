@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Settings → Appearance**: popup size presets, custom width/minimum height, text/button scaling, and per-button visibility. Hidden actions stay in More with their keyboard shortcuts.
 - Optional custom popup background and urgency colors, with automatic text contrast adjustment.
+- Original, Solid and Minimal presets; adjustable background translucency with opaque text and a solid fallback for Reduce Transparency/Increase Contrast.
+- Horizontal/vertical popup positioning, a bezel-flush Dock to Top option with notch-safe content, and an optional slide from the top that respects Reduce Motion.
 - A sample-alert preview and an appearance-only reset. Open alerts update when appearance changes; buttons wrap at compact sizes.
 
 ### Fixed
